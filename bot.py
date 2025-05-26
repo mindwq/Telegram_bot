@@ -2,7 +2,7 @@ import os
 import asyncpg
 from datetime import datetime, timedelta
 from datetime import datetime, date as date_class
-
+from aiogram.types import ReplyKeyboardRemove 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto, FSInputFile
@@ -37,7 +37,7 @@ class MemoryStates(StatesGroup):
     waiting_for_photo = State()
     waiting_for_start_date = State()
     waiting_for_end_date = State()
-    waiting_for_custom_date = State()
+    waiting_for_custom_date = State()ы
 
 
 # Глобальные переменные для пагинации
@@ -90,11 +90,10 @@ async def show_main_menu(message: Message, text: str = None):
     )
     builder.row(types.KeyboardButton(text="История"))
 
-    if text is None:
-        text = "Привет! Я помогу тебе спланировать день и сохранить воспоминания."
+    
 
     await message.answer(
-        text,
+        text or "Выберите действие:",
         reply_markup=builder.as_markup(resize_keyboard=True)
     )
 
@@ -102,12 +101,18 @@ async def show_main_menu(message: Message, text: str = None):
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    await show_main_menu(message)
+    welcome_text = "Привет! Я помогу тебе спланировать день и сохранить воспоминания."
+    await show_main_menu(message, welcome_text)
 
 
 # Обработчик кнопки "Поехали!"
 @dp.message(F.text == "Поехали!")
 async def ask_interests(message: Message):
+    await message.answer(
+        "Что вас интересует?",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
     builder = InlineKeyboardBuilder()
     builder.row(
         types.InlineKeyboardButton(text="Концерты", callback_data="category_concert"),
@@ -117,14 +122,14 @@ async def ask_interests(message: Message):
     builder.row(types.InlineKeyboardButton(text="Назад", callback_data="main_menu"))
 
     await message.answer(
-        "Что вас интересует?",
+        "Выберите категорию:",
         reply_markup=builder.as_markup()
     )
 
 # Простая реализация "кэша" в памяти для текущего пользователя
 async def get_events_from_cache(user_id: int):
     events = events_cache.get(user_id)
-    print(f"[DEBUG] Events in cache for user {user_id}: {len(events) if events else 0}")
+    
     return events
 
 
@@ -133,14 +138,14 @@ async def get_events(category: str, date_input: str):
     """Улучшенная версия функции для получения событий"""
     params = {
         'location': 'spb',
-        'page_size': 20,  # Было 0 - это ошибка, получали 0 событий
+        'page_size': 20,  
         'lang': 'ru',
-        'fields': 'id,title,place,price,images,site_url,description',  # Явно запрашиваем нужные поля
-        'expand': 'place',  # Получаем полную информацию о месте
-        'text_format': 'plain'  # Убираем HTML-разметку в описаниях
+        'fields': 'id,title,place,price,images,site_url,description',  
+        'expand': 'place',  
+        'text_format': 'plain'  
     }
 
-    # Определяем категорию
+    
     category_map = {
         'concert': 'concert',
         'exhibition': 'exhibition',
@@ -148,7 +153,7 @@ async def get_events(category: str, date_input: str):
     }
     params['categories'] = category_map.get(category, 'all')
 
-    # Обрабатываем разные форматы даты
+   
     try:
         if date_input == 'today':
             since = datetime.now()
@@ -157,29 +162,29 @@ async def get_events(category: str, date_input: str):
             since = datetime.now() + timedelta(days=1)
             until = since + timedelta(days=1)
         else:
-            # Для ручного ввода даты
+            
             since = datetime.strptime(date_input, "%d.%m.%Y")
             until = since + timedelta(days=1)
 
-        # Форматируем временные метки
+       
         params['actual_since'] = int(since.timestamp())
         params['actual_until'] = int(until.timestamp())
 
-        # Делаем запрос с таймаутом
+        
         response = requests.get(
             'https://kudago.com/public-api/v1.4/events/',
             params=params,
             timeout=10
         )
         
-        # Проверяем статус ответа
+       
         if response.status_code != 200:
             print(f"API вернуло статус {response.status_code}")
             return []
             
         data = response.json()
         
-        # Проверяем наличие результатов
+        
         if not data.get('results'):
             print("API вернуло пустой список событий")
             return []
@@ -299,6 +304,30 @@ async def choose_date(callback: CallbackQuery):
         reply_markup=builder.as_markup()
     )
 
+@dp.callback_query(F.data == "back_to_interests")
+async def back_to_interests_handler(callback: CallbackQuery):
+    # Сначала пытаемся отредактировать предыдущее сообщение
+    try:
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            types.InlineKeyboardButton(text="Концерты", callback_data="category_concert"),
+            types.InlineKeyboardButton(text="Выставки", callback_data="category_exhibition"),
+            types.InlineKeyboardButton(text="Развлечения", callback_data="category_fun")
+        )
+        builder.row(types.InlineKeyboardButton(text="Назад", callback_data="main_menu"))
+
+        await callback.message.edit_text(
+            "Что вас интересует?",
+            reply_markup=builder.as_markup()
+        )
+    except Exception as e:
+        print(f"Ошибка при редактировании сообщения: {e}")
+        # Если не получилось отредактировать, отправляем новое
+        await callback.message.answer(
+            "Что вас интересует?",
+            reply_markup=builder.as_markup()
+        )
+    await callback.answer()
 
 # Обработчик выбора даты
 @dp.callback_query(F.data.startswith("date_"))
@@ -398,6 +427,11 @@ async def handle_event_navigation(callback: CallbackQuery):
 # Обработчик кнопки "На память"
 @dp.message(F.text == "На память")
 async def start_memory_creation(message: Message, state: FSMContext):
+    await message.answer(
+        "📅 Выберите дату воспоминания:",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
     builder = InlineKeyboardBuilder()
     builder.row(
         types.InlineKeyboardButton(
@@ -415,7 +449,7 @@ async def start_memory_creation(message: Message, state: FSMContext):
     ))
 
     await message.answer(
-        "📅 Выберите дату воспоминания:",
+        "Выберите вариант:",
         reply_markup=builder.as_markup()
     )
     await state.set_state(MemoryStates.waiting_for_date)
@@ -460,13 +494,34 @@ async def process_memory_place(message: Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     for i in range(1, 11):
         builder.button(text=str(i), callback_data=f"rating_{i}")
-    builder.button(text="Назад", callback_data="back_to_date")
+    builder.button(text="Назад", callback_data="back_to_rate")
 
     await message.answer(
         "Оцените ваш день",
         reply_markup=builder.as_markup()
     )
     await state.set_state(MemoryStates.waiting_for_rating)
+
+@dp.callback_query(F.data == "back_to_rate")
+async def back_to_place_handler(callback: CallbackQuery, state: FSMContext):
+    # Получаем сохраненные данные
+    data = await state.get_data()
+    place = data.get('place', '')
+    
+    # Отправляем сообщение с предыдущим значением места (если было введено)
+    if place:
+        await callback.message.answer(f"🏛 Введите название места/локации (предыдущее: {place}):")
+    else:
+        await callback.message.answer("🏛 Напишите название места/локации:")
+    
+    # Удаляем сообщение с оценками
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
+    await state.set_state(MemoryStates.waiting_for_place)
+    await callback.answer()
 
 
 # Обработчик оценки для воспоминания
@@ -489,16 +544,16 @@ async def process_memory_rating(callback: CallbackQuery, state: FSMContext):
 async def skip_description(callback: CallbackQuery, state: FSMContext):
     await state.update_data(description=None)
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Пропустить", callback_data="skip_photo")
-
-    await callback.message.answer(
+    # Сохраняем ID сообщения с запросом фото
+    photo_msg = await callback.message.answer(
         "📸 Пришлите фото дня",
-        reply_markup=builder.as_markup()
+        reply_markup=InlineKeyboardBuilder()
+            .button(text="Пропустить", callback_data="skip_photo")
+            .as_markup()
     )
+    await state.update_data(photo_request_msg_id=photo_msg.message_id)
     await state.set_state(MemoryStates.waiting_for_photo)
     await callback.message.delete()
-
 
 
 # Обработчик описания для воспоминания
@@ -506,13 +561,13 @@ async def skip_description(callback: CallbackQuery, state: FSMContext):
 async def process_memory_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Пропустить", callback_data="skip_photo")
-
-    await message.answer(
+    photo_msg = await message.answer(
         "📸 Пришлите фото дня",
-        reply_markup=builder.as_markup()
+        reply_markup=InlineKeyboardBuilder()
+            .button(text="Пропустить", callback_data="skip_photo")
+            .as_markup()
     )
+    await state.update_data(photo_request_msg_id=photo_msg.message_id)
     await state.set_state(MemoryStates.waiting_for_photo)
 
 
@@ -522,6 +577,14 @@ async def process_memory_photo(message: Message, state: FSMContext):
 
     data = await state.get_data()
     
+    try:
+        await bot.delete_message(
+            chat_id=message.chat.id,
+            message_id=data['photo_request_msg_id']
+        )
+    except:
+        pass
+
     # Если фото не прикреплено (например, текст вместо фото)
     if not message.photo:
         await message.answer("📸 Пожалуйста, прикрепите фото или нажмите 'Пропустить'")
@@ -557,6 +620,14 @@ async def skip_photo(callback: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
 
+    try:
+        await bot.delete_message(
+            chat_id=callback.message.chat.id,
+            message_id=data['photo_request_msg_id']
+        )
+    except:
+        pass
+
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO memories 
@@ -577,7 +648,12 @@ async def skip_photo(callback: CallbackQuery, state: FSMContext):
 
 # Обработчик кнопки "История"
 @dp.message(F.text == "История")
-async def show_history_periods(message: Message):
+async def show_history_periods(message: Message, state: FSMContext):
+    remove_msg = await message.answer(
+        "За какой период показать историю?",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
     builder = InlineKeyboardBuilder()
     builder.row(
         types.InlineKeyboardButton(text="Неделя", callback_data="history_week"),
@@ -588,10 +664,17 @@ async def show_history_periods(message: Message):
         types.InlineKeyboardButton(text="Назад", callback_data="main_menu")
     )
 
-    await message.answer(
-        "За какой период показать историю?",
+    #remove_keyboard = ReplyKeyboardRemove()
+    keyboard_msg = await message.answer(
+        "Выберите период:",
         reply_markup=builder.as_markup()
     )
+
+    await state.update_data({
+        'history_msg_id': remove_msg.message_id,
+        'history_keyboard_id': keyboard_msg.message_id
+    })
+    
 
 
 # Получение воспоминаний из БД (теперь без параметра pool)
@@ -622,7 +705,7 @@ async def get_memories(user_id: int, period: str = None, start_date: str = None,
 
 
 # Отображение карточки воспоминания
-async def show_memory_card(chat_id: int, memories: list, index: int):
+async def show_memory_card(chat_id: int, memories: list, index: int, last_message_id: int = None):
     memory = memories[index]
 
     text = (
@@ -638,11 +721,18 @@ async def show_memory_card(chat_id: int, memories: list, index: int):
         builder.button(text="Назад", callback_data=f"memory_prev_{index}")
     if index < len(memories) - 1:
         builder.button(text="Дальше", callback_data=f"memory_next_{index}")
-    builder.button(text="Меню", callback_data="main_menu")
+    builder.button(text="Меню", callback_data="memory_to_menu")
+
+    if last_message_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=last_message_id)
+        except:
+            pass
+
 
     # Отправка сообщения
     if memory['photo_path'] and os.path.exists(memory['photo_path']):
-        await bot.send_photo(
+        sent_message = await bot.send_photo(
             chat_id=chat_id,
             photo=FSInputFile(memory['photo_path']),
             caption=text,
@@ -650,20 +740,37 @@ async def show_memory_card(chat_id: int, memories: list, index: int):
             parse_mode='HTML'
         )
     else:
-        await bot.send_message(
+        sent_message = await bot.send_message(
             chat_id=chat_id,
             text=text,
             reply_markup=builder.as_markup(),
             parse_mode='HTML'
         )
+    return sent_message.message_id 
 
 
+@dp.callback_query(F.data == "memory_to_menu")
+async def memory_back_to_menu(callback: CallbackQuery, state: FSMContext):
+    # Удаляем сообщение с карточкой
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Показываем главное меню
+    await show_main_menu(callback.message)
+    await callback.answer()
+    
 # Обработчик выбора периода истории (теперь без параметра pool)
 @dp.callback_query(F.data.startswith("history_"))
 async def handle_history_period(callback: CallbackQuery, state: FSMContext):
     period = callback.data.split("_")[1]
 
     if period == 'custom':
+        await callback.message.delete()
         await callback.message.answer("Введите начальную дату периода (ДД.ММ.ГГГГ)")
         await state.set_state(MemoryStates.waiting_for_start_date)
         return
@@ -675,6 +782,7 @@ async def handle_history_period(callback: CallbackQuery, state: FSMContext):
         memories = await get_memories(callback.from_user.id, 'month')
 
     if not memories:
+        await callback.message.delete()
         await callback.message.answer("За выбранный период воспоминаний не найдено")
         return
     
@@ -689,6 +797,14 @@ async def handle_history_period(callback: CallbackQuery, state: FSMContext):
 @dp.message(MemoryStates.waiting_for_start_date)
 async def process_start_date(message: Message, state: FSMContext):
     try:
+        input_date = datetime.strptime(message.text, "%d.%m.%Y").date()
+        today = date_class.today()
+        
+        # Проверяем, что дата не будущая
+        if input_date > today:
+            await message.answer("Дата не может быть будущей. Введите корректную дату в формате ДД.ММ.ГГГГ")
+            return
+        
         start_date = datetime.strptime(message.text, "%d.%m.%Y").date()
         await state.update_data(start_date=start_date)
         await message.answer("Введите конечную дату периода (ДД.ММ.ГГГГ)")
@@ -701,13 +817,22 @@ async def process_start_date(message: Message, state: FSMContext):
 @dp.message(MemoryStates.waiting_for_end_date)
 async def process_end_date(message: Message, state: FSMContext):
     try:
+
+        today = datetime.now().date()
+
         end_date = datetime.strptime(message.text, "%d.%m.%Y").date()
         data = await state.get_data()
         start_date = data.get('start_date')
 
-        if start_date > end_date:
-            await message.answer("Начальная дата должна быть раньше конечной")
+        if end_date > today:
+            await message.answer("Конечная дата не может быть в будущем. Введите корректную дату.")
             return
+
+        if start_date > end_date:
+            await message.answer("Ошибка: конечная дата должна быть позже начальной. "
+                               f"Вы ввели период с {start_date.strftime('%d.%m.%Y')} по {end_date.strftime('%d.%m.%Y')}")
+            return
+        
 
         memories = await get_memories(
             message.from_user.id,
@@ -754,9 +879,25 @@ async def handle_memory_navigation(callback: CallbackQuery):
 
 # Обработчик возврата в меню
 @dp.callback_query(F.data == "main_menu")
-async def back_to_main_menu(callback: CallbackQuery):
-    await callback.message.delete()
-    await show_main_menu(callback.message)
+async def back_to_main_menu(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    
+    # Удаляем оба сообщения истории
+    try:
+        await bot.delete_message(
+            chat_id=callback.message.chat.id,
+            message_id=data['history_msg_id']
+        )
+        await bot.delete_message(
+            chat_id=callback.message.chat.id,
+            message_id=data['history_keyboard_id']
+        )
+    except:
+        pass
+    
+    await state.clear()
+    await show_main_menu(callback.message, "Главное меню")
+    await callback.answer()
 
 
 async def get_events_from_cache(user_id: int):
